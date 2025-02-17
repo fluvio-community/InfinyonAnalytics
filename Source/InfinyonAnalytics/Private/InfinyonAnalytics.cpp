@@ -13,6 +13,7 @@ IMPLEMENT_MODULE(FAnalyticsInfinyonAnalytics, InfinyonAnalytics)
 void FAnalyticsInfinyonAnalytics::StartupModule()
 {
     Provider = MakeShareable(new FAnalyticsProviderInfinyonAnalytics());
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Started"));
 }
 
 void FAnalyticsInfinyonAnalytics::ShutdownModule()
@@ -21,6 +22,7 @@ void FAnalyticsInfinyonAnalytics::ShutdownModule()
 	{
 		Provider->EndSession();
 	}
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Shutdown"));
 }
 
 TSharedPtr<IAnalyticsProvider> FAnalyticsInfinyonAnalytics::CreateAnalyticsProvider(const FAnalyticsProviderConfigurationDelegate& GetConfigValue) const
@@ -139,10 +141,12 @@ FAnalyticsEventAttribute FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAtt
 // Can check WebSocket.IsValid() to see if the connection was successful
 void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
 {
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("ConnectWebSocket: Checking Websocket module load"));
     if (!FModuleManager::Get().IsModuleLoaded("WebSockets")) {
         UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSockets module not loaded!"));
         return;
     }
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket trying to connect"));
     const FString protocol = TEXT("wss");
     WebSocket = FWebSocketsModule::Get().CreateWebSocket(WebSocketUrl, protocol);
     WebSocket->OnConnected().AddLambda([]()
@@ -152,7 +156,7 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
 
     WebSocket->OnConnectionError().AddLambda([](const FString& Error)
     {
-        UE_LOG(LogTemp, Error, TEXT("WebSocket connection error: %s"), *Error);
+        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket connection error: %s"), *Error);
     });
 
     WebSocket->OnClosed().AddLambda([](int32 StatusCode, const FString& Reason, bool bWasClean)

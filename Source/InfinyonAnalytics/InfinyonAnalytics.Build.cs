@@ -34,6 +34,7 @@ public class InfinyonAnalytics : ModuleRules
 			new string[]
 			{
 				"Analytics",
+				"Json",
 				"WebSockets"
 				// ... add private dependencies that you statically link with here ...
 			}
