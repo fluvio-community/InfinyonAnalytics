@@ -162,7 +162,6 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
         UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSockets module not loaded!"));
         return;
     }
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket module load check ok"));
 
     FString protocol;
     if (WebSocketUrl.StartsWith(TEXT("wss://")))
@@ -178,10 +177,10 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
         UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket URL must start with ws:// or wss://"));
         return;
     }
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket trying to create w/ protocol: %s"), *protocol);
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket create w/ protocol: %s"), *protocol);
     WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
 
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket created: adding event handlers"));
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connecting..."));
     WebSocket->OnConnected().AddLambda([]()
     {
         UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connected!"));
@@ -196,13 +195,11 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
     {
         UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket closed: %s"), *Reason);
     });
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connecting..."));
     WebSocket->Connect();
 }
 
 void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
-
     auto json_event = EventToJson(EventName, Attributes);
 
     FString out_string;
@@ -216,13 +213,11 @@ void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& 
         if (!WebSocket.IsValid() || !WebSocket->IsConnected())
         {
             UE_LOG(LogInfinyonAnalytics, Error, TEXT("Send: WebSocket is not connected."));
-            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("event:\n%s"), *out_string);
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("not sent, event: %s"), *EventName);
             return;
         }
     }
-
-
-     WebSocket->Send(out_string);
+    WebSocket->Send(out_string);
 }
 
 
@@ -235,7 +230,6 @@ TSharedPtr<FJsonObject> EventToJson(const FString& EventName, const TArray<FAnal
 
    // Create a JSON object for the attributes
    TSharedPtr<FJsonObject> AttributesObject = MakeShared<FJsonObject>();
-
 
    // Add each attribute to the JSON object
    for (const FAnalyticsEventAttribute& Attribute : Attributes)
