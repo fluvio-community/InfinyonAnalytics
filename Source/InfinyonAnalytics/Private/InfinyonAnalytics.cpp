@@ -12,6 +12,10 @@ IMPLEMENT_MODULE(FAnalyticsInfinyonAnalytics, InfinyonAnalytics)
 
 void FAnalyticsInfinyonAnalytics::StartupModule()
 {
+    if (!FModuleManager::Get().IsModuleLoaded("WebSockets"))
+    {
+        FModuleManager::Get().LoadModule("WebSockets");
+    }
     Provider = MakeShareable(new FAnalyticsProviderInfinyonAnalytics());
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Started"));
 }
@@ -54,8 +58,8 @@ FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics()
     // hardcode for now, but figure out how to get in from FAnalyticsProviderModule startup
     // and pass to the provider
     ApiKey = TEXT("TBD");
-    WebSocketUrl = TEXT("wss://infinyon.cloud/wsr/v1/simple/produce?access_key=Cad5tsjLM46Ig54m6DVPxusTLTkTwbzC");
-
+    // WebSocketUrl = TEXT("wss://infinyon.cloud/wsr/v1/simple/produce?access_key=Cad5tsjLM46Ig54m6DVPxusTLTkTwbzC");
+    WebSocketUrl = TEXT("ws://127.0.0.1:3000/ws/v2/produce/analytics");
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider created."));
 }
 
@@ -70,14 +74,21 @@ FAnalyticsProviderInfinyonAnalytics::~FAnalyticsProviderInfinyonAnalytics()
 bool FAnalyticsProviderInfinyonAnalytics::StartSession(const TArray<FAnalyticsEventAttribute>& Attributes)
 {
     // record a session start event
-    RecordEvent(TEXT("AnalyticsSessionStart"), Attributes);
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider Session Started"));
+    TArray<FAnalyticsEventAttribute> attrs;
+    attrs.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
+    attrs.Append(Attributes);
+
+    RecordEvent(TEXT("AnalyticsSessionStart"), attrs);
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider Session Started: %s"), *GetSessionID());
     return true;
 }
 
 void FAnalyticsProviderInfinyonAnalytics::EndSession()
 {
-    RecordEvent(TEXT("AnalyticsSessionEnd"), TArray<FAnalyticsEventAttribute>());
+    TArray<FAnalyticsEventAttribute> Attributes;
+    Attributes.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
+    RecordEvent(TEXT("AnalyticsSessionEnd"), Attributes);
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider Session End: %s"), *GetSessionID());
 }
 
 void FAnalyticsProviderInfinyonAnalytics::FlushEvents()
@@ -134,7 +145,7 @@ int32 FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAttributeCount() const
 
 FAnalyticsEventAttribute FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAttribute(int AttributeIndex) const
 {
-    // return empty
+    // return emptyhttps://forums.unrealengine.com/t/how-to-properly-implement-iwebsocket-and-send-packets-with-high-frequency/1206501/2
     return FAnalyticsEventAttribute();
 }
 
@@ -143,15 +154,37 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
 {
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("ConnectWebSocket: Checking Websocket module load"));
     if (!FModuleManager::Get().IsModuleLoaded("WebSockets")) {
-        UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSockets module not loaded!"));
+        FModuleManager::Get().LoadModule("WebSockets");
+    }
+    auto ws_module = &FWebSocketsModule::Get();
+    if (ws_module == nullptr)
+    {
+        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSockets module not loaded!"));
         return;
     }
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket trying to connect"));
-    const FString protocol = TEXT("wss");
-    WebSocket = FWebSocketsModule::Get().CreateWebSocket(WebSocketUrl, protocol);
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket module load check ok"));
+
+    FString protocol;
+    if (WebSocketUrl.StartsWith(TEXT("wss://")))
+    {
+        protocol = TEXT("wss");
+    }
+    else if (WebSocketUrl.StartsWith(TEXT("ws://")))
+    {
+        protocol = TEXT("ws");
+    }
+    else
+    {
+        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket URL must start with ws:// or wss://"));
+        return;
+    }
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket trying to create w/ protocol: %s"), *protocol);
+    WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
+
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket created: adding event handlers"));
     WebSocket->OnConnected().AddLambda([]()
     {
-        UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket connected!"));
+        UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connected!"));
     });
 
     WebSocket->OnConnectionError().AddLambda([](const FString& Error)
@@ -161,29 +194,33 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
 
     WebSocket->OnClosed().AddLambda([](int32 StatusCode, const FString& Reason, bool bWasClean)
     {
-        UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket closed: %s"), *Reason);
+        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket closed: %s"), *Reason);
     });
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connecting..."));
     WebSocket->Connect();
 }
 
 void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
+
+    auto json_event = EventToJson(EventName, Attributes);
+
+    FString out_string;
+    TSharedRef< TJsonWriter<> > writer_ref = TJsonWriterFactory<>::Create(&out_string);
+    TJsonWriter<>& Writer = writer_ref.Get();
+    FJsonSerializer::Serialize(json_event.ToSharedRef(), Writer);
+
     if (!WebSocket.IsValid() || !WebSocket->IsConnected())
     {
         ConnectWebSocket();
         if (!WebSocket.IsValid() || !WebSocket->IsConnected())
         {
-            UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket is not connected."));
+            UE_LOG(LogInfinyonAnalytics, Error, TEXT("Send: WebSocket is not connected."));
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("event:\n%s"), *out_string);
             return;
         }
     }
 
-     auto json_event = EventToJson(EventName, Attributes);
-
-     FString out_string;
-     TSharedRef< TJsonWriter<> > writer_ref = TJsonWriterFactory<>::Create(&out_string);
-     TJsonWriter<>& Writer = writer_ref.Get();
-     FJsonSerializer::Serialize(json_event.ToSharedRef(), Writer);
 
      WebSocket->Send(out_string);
 }
