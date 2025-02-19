@@ -3,12 +3,15 @@
 #include "InfinyonAnalyticsProvider.h"
 #include "Json.h"
 #include "WebSocketsModule.h"
+#include "Misc/App.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogInfinyonAnalytics, Display, All);
 
 //****** MODULE *********/
 
 IMPLEMENT_MODULE(FAnalyticsInfinyonAnalytics, InfinyonAnalytics)
+
+const uint32 DEFAULT_BUFFER_ENTRIES = 1024;
 
 void FAnalyticsInfinyonAnalytics::StartupModule()
 {
@@ -17,7 +20,10 @@ void FAnalyticsInfinyonAnalytics::StartupModule()
         FModuleManager::Get().LoadModule("WebSockets");
     }
     Provider = MakeShareable(new FAnalyticsProviderInfinyonAnalytics());
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Started"));
+
+    auto session_id = FApp::GetSessionId().ToString();
+    Provider->SetSessionID(session_id);
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Started: app sid \"%s\""), *session_id);
 }
 
 void FAnalyticsInfinyonAnalytics::ShutdownModule()
@@ -31,41 +37,29 @@ void FAnalyticsInfinyonAnalytics::ShutdownModule()
 
 TSharedPtr<IAnalyticsProvider> FAnalyticsInfinyonAnalytics::CreateAnalyticsProvider(const FAnalyticsProviderConfigurationDelegate& GetConfigValue) const
 {
-    // todo: set key
-    // if (GetConfigValue.IsBound())
-	// {
-    //     // Fetch the API key from the .ini file
-    //     FString ApiKey = GetConfigValue.Execute(TEXT("ApiKey"), true);
-    //     if (ApiKey.IsEmpty())
-    //     {
-    //         UE_LOG(LogInfinyonAnalytics, Error, TEXT("API Key is missing in the configuration."));
-    //     }
-    //     return MakeShared<FAnalyticsProviderInfinyonAnalytics>();
-    // } else {
-    //     UE_LOG(LogInfinyonAnalytics, Error, TEXT("InfinyonAnalytics: unbound config delegate"));
-    // }
     return Provider;
 }
 
 //****** PROVIDER *********/
 
 // defined below
-TSharedPtr<FJsonObject> EventToJson(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
+FString EventToString(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
 
-
-FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics()
+FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics() :
+  nEventBuffer(0)
 {
     // hardcode for now, but figure out how to get in from FAnalyticsProviderModule startup
     // and pass to the provider
     ApiKey = TEXT("TBD");
     // WebSocketUrl = TEXT("wss://infinyon.cloud/wsr/v1/simple/produce?access_key=Cad5tsjLM46Ig54m6DVPxusTLTkTwbzC");
     WebSocketUrl = TEXT("ws://127.0.0.1:3000/ws/v2/produce/analytics");
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider created."));
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Provider created."));
+    WebSocketConnect();
 }
 
 FAnalyticsProviderInfinyonAnalytics::~FAnalyticsProviderInfinyonAnalytics()
 {
-    if (WebSocket.IsValid())
+    if (WebSocket->IsConnected())
     {
         WebSocket->Close();
     }
@@ -73,13 +67,16 @@ FAnalyticsProviderInfinyonAnalytics::~FAnalyticsProviderInfinyonAnalytics()
 
 bool FAnalyticsProviderInfinyonAnalytics::StartSession(const TArray<FAnalyticsEventAttribute>& Attributes)
 {
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Session Started: sid \"%s\""), *GetSessionID());
+
     // record a session start event
+    // todo add other FApp attributes
     TArray<FAnalyticsEventAttribute> attrs;
     attrs.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
     attrs.Append(Attributes);
 
     RecordEvent(TEXT("AnalyticsSessionStart"), attrs);
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider Session Started: %s"), *GetSessionID());
+
     return true;
 }
 
@@ -88,12 +85,28 @@ void FAnalyticsProviderInfinyonAnalytics::EndSession()
     TArray<FAnalyticsEventAttribute> Attributes;
     Attributes.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
     RecordEvent(TEXT("AnalyticsSessionEnd"), Attributes);
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Fluvio Analytics Provider Session End: %s"), *GetSessionID());
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Provider Session End: %s"), *GetSessionID());
 }
 
 void FAnalyticsProviderInfinyonAnalytics::FlushEvents()
 {
-    // Flush any pending events
+    if (!WebSocket->IsConnected())
+    {
+        WebSocketCheck();
+        if (!WebSocket->IsConnected()) {
+            return;
+        }
+    }
+
+    while (!EventBuffer.IsEmpty())
+    {
+        auto event = DeQueueEvent();
+        if (event.IsEmpty())
+        {
+            break;
+        }
+        WebSocket->Send(event);
+    }
 }
 
 void FAnalyticsProviderInfinyonAnalytics::SetUserID(const FString& InUserID)
@@ -119,11 +132,18 @@ FString FAnalyticsProviderInfinyonAnalytics::GetSessionID() const
 
 void FAnalyticsProviderInfinyonAnalytics::RecordEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
-    // Record the event with the provided attributes
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Event Recorded: %s"), *EventName);
-
-    // DBG: Send directly over websocket
-    // todo: figure out if UE framework does buffereing or if it's the provider's responsibility
+    FlushEvents();
+    if (!WebSocket->IsConnected()) {
+        // buffer the event
+        if (!EnQueueEvent(EventName, Attributes))
+        {
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("%s, event not sent or queued, buffer full"), *EventName);
+            return;
+        }
+        UE_LOG(LogInfinyonAnalytics, Log, TEXT("%s, event queued"), *EventName);
+        return;
+    }
+    // Send directly over websocket
     SendEventOverWebSocket(EventName, Attributes);
 }
 
@@ -149,9 +169,21 @@ FAnalyticsEventAttribute FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAtt
     return FAnalyticsEventAttribute();
 }
 
-// Can check WebSocket.IsValid() to see if the connection was successful
-void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
+void FAnalyticsProviderInfinyonAnalytics::WebSocketCheck()
 {
+    auto valid = WebSocket.IsValid() ? TEXT("valid") : TEXT("INVALID");
+    auto connected = WebSocket->IsConnected() ? TEXT("connected") : TEXT("NOT connected");
+    UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket status: %s %s"), valid, connected);
+}
+
+// Can check WebSocket.IsValid() to see if the connection was successful
+void FAnalyticsProviderInfinyonAnalytics::WebSocketConnect()
+{
+    if (WebSocket.IsValid() && WebSocket->IsConnected())
+    {
+        return;
+    }
+
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("ConnectWebSocket: Checking Websocket module load"));
     if (!FModuleManager::Get().IsModuleLoaded("WebSockets")) {
         FModuleManager::Get().LoadModule("WebSockets");
@@ -163,61 +195,78 @@ void FAnalyticsProviderInfinyonAnalytics::ConnectWebSocket()
         return;
     }
 
-    FString protocol;
-    if (WebSocketUrl.StartsWith(TEXT("wss://")))
-    {
-        protocol = TEXT("wss");
-    }
-    else if (WebSocketUrl.StartsWith(TEXT("ws://")))
-    {
-        protocol = TEXT("ws");
-    }
-    else
-    {
-        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket URL must start with ws:// or wss://"));
-        return;
-    }
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket create w/ protocol: %s"), *protocol);
-    WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
+    if (!WebSocket.IsValid()) {
+        FString protocol;
+        if (WebSocketUrl.StartsWith(TEXT("wss://")))
+        {
+            protocol = TEXT("wss");
+        }
+        else if (WebSocketUrl.StartsWith(TEXT("ws://")))
+        {
+            protocol = TEXT("ws");
+        }
+        else
+        {
+            UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket URL must start with ws:// or wss://"));
+            return;
+        }
+        UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket create w/ protocol: %s"), *protocol);
+        WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
 
-    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connecting..."));
-    WebSocket->OnConnected().AddLambda([]()
-    {
-        UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connected!"));
-    });
+        WebSocket->OnConnected().AddLambda([]()
+        {
+            UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket connected!"));
+        });
 
-    WebSocket->OnConnectionError().AddLambda([](const FString& Error)
-    {
-        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket connection error: %s"), *Error);
-    });
+        WebSocket->OnConnectionError().AddLambda([](const FString& Error)
+        {
+            UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket connection error: %s"), *Error);
+        });
 
-    WebSocket->OnClosed().AddLambda([](int32 StatusCode, const FString& Reason, bool bWasClean)
-    {
-        UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket closed: %s"), *Reason);
-    });
-    WebSocket->Connect();
+        WebSocket->OnClosed().AddLambda([](int32 StatusCode, const FString& Reason, bool bWasClean)
+        {
+            UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket closed: %s"), *Reason);
+        });
+        UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket connecting..."));
+        WebSocket->Connect();
+    }
+    if (!WebSocket->IsConnected()) {
+        UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket still connecting..."));
+    }
 }
 
 void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
-    auto json_event = EventToJson(EventName, Attributes);
-
-    FString out_string;
-    TSharedRef< TJsonWriter<> > writer_ref = TJsonWriterFactory<>::Create(&out_string);
-    TJsonWriter<>& Writer = writer_ref.Get();
-    FJsonSerializer::Serialize(json_event.ToSharedRef(), Writer);
-
-    if (!WebSocket.IsValid() || !WebSocket->IsConnected())
+    FlushEvents();
+    if (!WebSocket->IsConnected())
     {
-        ConnectWebSocket();
-        if (!WebSocket.IsValid() || !WebSocket->IsConnected())
-        {
-            UE_LOG(LogInfinyonAnalytics, Error, TEXT("Send: WebSocket is not connected."));
-            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("not sent, event: %s"), *EventName);
-            return;
-        }
+        WebSocketCheck();
+        return;
     }
+    FString out_string = EventToString(EventName, Attributes);
     WebSocket->Send(out_string);
+}
+
+bool FAnalyticsProviderInfinyonAnalytics::EnQueueEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
+{
+    if (nEventBuffer >= DEFAULT_BUFFER_ENTRIES)
+    {
+        return false;
+    }
+    FString out_string = EventToString(EventName, Attributes);
+    EventBuffer.Enqueue(out_string);
+    nEventBuffer++;
+    return true;
+}
+
+FString FAnalyticsProviderInfinyonAnalytics::DeQueueEvent()
+{
+    FString out_string;
+    if (EventBuffer.Dequeue(out_string))
+    {
+        nEventBuffer--;
+    }
+    return out_string;
 }
 
 
@@ -238,4 +287,17 @@ TSharedPtr<FJsonObject> EventToJson(const FString& EventName, const TArray<FAnal
    }
    JsonObject->SetObjectField(TEXT("attributes"), AttributesObject);
    return JsonObject;
+}
+
+
+FString EventToString(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
+{
+    auto json_event = EventToJson(EventName, Attributes);
+
+    FString out_string;
+    TSharedRef< TJsonWriter<> > writer_ref = TJsonWriterFactory<>::Create(&out_string);
+    TJsonWriter<>& Writer = writer_ref.Get();
+    FJsonSerializer::Serialize(json_event.ToSharedRef(), Writer);
+
+    return out_string;
 }

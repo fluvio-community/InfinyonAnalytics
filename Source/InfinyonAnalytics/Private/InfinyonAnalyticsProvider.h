@@ -38,6 +38,15 @@ private:
     FString WebSocketUrl;
     TSharedPtr<IWebSocket> WebSocket; // WebSocket instance
 
-    void ConnectWebSocket();
+    TQueue<FString> EventBuffer;
+    uint32 nEventBuffer;
+
+    bool EnQueueEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
+    FString DeQueueEvent();
+
+    void WebSocketCheck();
+    void WebSocketConnect();
+
     void SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
+
 };
