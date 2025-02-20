@@ -34,6 +34,8 @@ private:
     FString UserID;
     FString SessionID;
 
+    TArray<FAnalyticsEventAttribute> DefaultEventAttributes;
+
     FString WebSocketUrl;
     TSharedPtr<IWebSocket> WebSocket; // WebSocket instance
 
@@ -47,5 +49,4 @@ private:
     void WebSocketConnect();
 
     void SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
-
 };

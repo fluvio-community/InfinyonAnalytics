@@ -24,6 +24,7 @@ void FAnalyticsInfinyonAnalytics::StartupModule()
 
     auto session_id = FApp::GetSessionId().ToString();
     Provider->SetSessionID(session_id);
+
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Module Started: app sid \"%s\""), *session_id);
 }
 
@@ -57,7 +58,7 @@ FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics() :
     UE_LOG(LogInfinyonAnalytics, Warning, TEXT("checking ini %s"), *GEngineIni);
     if (GConfig) {
         if (!GConfig->DoesSectionExist(SECTION_NAME, GEngineIni)) {
-            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("Section not found"));
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("Config section not found for %s"), SECTION_NAME);
         } else {
             GConfig->GetString(SECTION_NAME, TEXT("ApiKey"), cfgApiKey, GEngineIni);
             GConfig->GetString(SECTION_NAME, TEXT("URL"), cfgUrl, GEngineIni);
@@ -70,7 +71,7 @@ FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics() :
     if (!cfgApiKey.IsEmpty()) {
         WebSocketUrl = FString::Printf(TEXT("%s?access_key=%s"), *cfgUrl, *cfgApiKey);
     }
-    UE_LOG(LogInfinyonAnalytics, VeryVerbose, TEXT("Url: %s"), *WebSocketUrl);
+    // UE_LOG(LogInfinyonAnalytics, VeryVerbose, TEXT("Url: %s"), *WebSocketUrl);
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("provider created"));
     WebSocketConnect();
 }
@@ -131,7 +132,7 @@ void FAnalyticsProviderInfinyonAnalytics::FlushEvents()
     }
 }
 
-
+// this is for analytics user id, not used for InfinyonAnalytics
 void FAnalyticsProviderInfinyonAnalytics::SetUserID(const FString& InUserID)
 {
     UserID = InUserID;
@@ -147,6 +148,16 @@ FString FAnalyticsProviderInfinyonAnalytics::GetUserID() const
 bool FAnalyticsProviderInfinyonAnalytics::SetSessionID(const FString& InSessionID)
 {
     SessionID = InSessionID;
+
+    // if no default attributes have been set, add the sessionID
+    // this will be wiped out if SetDefaultEventAttributes is called
+    // but at that point, the caller should be aware of what they are doing
+    // and are recommended to keep the sessionID in the default attributes
+    // along with any other attributes they want to be sent with every event
+    if (DefaultEventAttributes.Num() == 0)
+    {
+        DefaultEventAttributes.Add(FAnalyticsEventAttribute(TEXT("sessionID"), SessionID));
+    }
 	return true;
 }
 
@@ -160,23 +171,30 @@ FString FAnalyticsProviderInfinyonAnalytics::GetSessionID() const
 void FAnalyticsProviderInfinyonAnalytics::RecordEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
     FlushEvents();
+
+    TArray<FAnalyticsEventAttribute> attrs;
+    attrs.Reserve(Attributes.Num() + DefaultEventAttributes.Num());
+
+    attrs.Append(DefaultEventAttributes);
+    attrs.Append(Attributes);
+
     if (!WebSocket->IsConnected()) {
         // buffer the event
-        if (!EnQueueEvent(EventName, Attributes))
+        if (!EnQueueEvent(EventName, attrs))
         {
-            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("%s, event not sent or queued, buffer full"), *EventName);
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("%s, event dropped, buffer full"), *EventName);
             return;
         }
         UE_LOG(LogInfinyonAnalytics, Log, TEXT("%s, event queued"), *EventName);
         return;
     }
-    // Send directly over websocket
-    SendEventOverWebSocket(EventName, Attributes);
+    SendEventOverWebSocket(EventName, attrs);
 }
 
 
 void FAnalyticsProviderInfinyonAnalytics::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
 {
+    DefaultEventAttributes = MoveTemp(Attributes);
 }
 
 
@@ -240,8 +258,9 @@ void FAnalyticsProviderInfinyonAnalytics::WebSocketConnect()
             return;
         }
         UE_LOG(LogInfinyonAnalytics, Warning, TEXT("WebSocket create w/ protocol: %s"), *protocol);
-        WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
 
+        // TODO: wrap WebSocket and state into a state engine to handle connection retries
+        WebSocket = ws_module->CreateWebSocket(WebSocketUrl, protocol);
         WebSocket->OnConnected().AddLambda([]()
         {
             UE_LOG(LogInfinyonAnalytics, Log, TEXT("WebSocket connected!"));
