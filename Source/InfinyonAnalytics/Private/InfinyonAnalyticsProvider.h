@@ -34,7 +34,6 @@ private:
     FString UserID;
     FString SessionID;
 
-    FString ApiKey;
     FString WebSocketUrl;
     TSharedPtr<IWebSocket> WebSocket; // WebSocket instance
 

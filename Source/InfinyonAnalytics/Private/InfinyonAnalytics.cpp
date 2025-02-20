@@ -4,6 +4,7 @@
 #include "Json.h"
 #include "WebSocketsModule.h"
 #include "Misc/App.h"
+#include "Misc/ConfigCacheIni.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogInfinyonAnalytics, Display, All);
 
@@ -41,21 +42,39 @@ TSharedPtr<IAnalyticsProvider> FAnalyticsInfinyonAnalytics::CreateAnalyticsProvi
 }
 
 //****** PROVIDER *********/
-
-// defined below
 FString EventToString(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
 
 FAnalyticsProviderInfinyonAnalytics::FAnalyticsProviderInfinyonAnalytics() :
   nEventBuffer(0)
 {
-    // hardcode for now, but figure out how to get in from FAnalyticsProviderModule startup
-    // and pass to the provider
-    ApiKey = TEXT("TBD");
-    // WebSocketUrl = TEXT("wss://infinyon.cloud/wsr/v1/simple/produce?access_key=Cad5tsjLM46Ig54m6DVPxusTLTkTwbzC");
-    WebSocketUrl = TEXT("ws://127.0.0.1:3000/ws/v2/produce/analytics");
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Infinyon Analytics Provider created."));
+    // See DefaultEngine.ini for configuration, or Plugins/InfinyonAnalytics/sampleConfig.ini
+    const auto SECTION_NAME = TEXT("InfinyonAnalytics");
+    const auto DEFAULT_URL = TEXT("wss://infinyon.cloud/wsr/v1/simple/produce");
+
+    FString cfgApiKey;
+    FString cfgUrl;
+
+    UE_LOG(LogInfinyonAnalytics, Warning, TEXT("checking ini %s"), *GEngineIni);
+    if (GConfig) {
+        if (!GConfig->DoesSectionExist(SECTION_NAME, GEngineIni)) {
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("Section not found"));
+        } else {
+            GConfig->GetString(SECTION_NAME, TEXT("ApiKey"), cfgApiKey, GEngineIni);
+            GConfig->GetString(SECTION_NAME, TEXT("URL"), cfgUrl, GEngineIni);
+            UE_LOG(LogInfinyonAnalytics, Warning, TEXT("loaded url=%s access_key=%s"), *cfgUrl, *cfgApiKey);
+        }
+    }
+    if (cfgUrl.IsEmpty()) {
+        cfgUrl = DEFAULT_URL;
+    }
+    if (!cfgApiKey.IsEmpty()) {
+        WebSocketUrl = FString::Printf(TEXT("%s?access_key=%s"), *cfgUrl, *cfgApiKey);
+    }
+    UE_LOG(LogInfinyonAnalytics, VeryVerbose, TEXT("Url: %s"), *WebSocketUrl);
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("provider created"));
     WebSocketConnect();
 }
+
 
 FAnalyticsProviderInfinyonAnalytics::~FAnalyticsProviderInfinyonAnalytics()
 {
@@ -65,11 +84,11 @@ FAnalyticsProviderInfinyonAnalytics::~FAnalyticsProviderInfinyonAnalytics()
     }
 }
 
+
 bool FAnalyticsProviderInfinyonAnalytics::StartSession(const TArray<FAnalyticsEventAttribute>& Attributes)
 {
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("Session Started: sid \"%s\""), *GetSessionID());
 
-    // record a session start event
     // todo add other FApp attributes
     TArray<FAnalyticsEventAttribute> attrs;
     attrs.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
@@ -80,13 +99,16 @@ bool FAnalyticsProviderInfinyonAnalytics::StartSession(const TArray<FAnalyticsEv
     return true;
 }
 
+
 void FAnalyticsProviderInfinyonAnalytics::EndSession()
 {
+    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Provider Session End: %s"), *GetSessionID());
+
     TArray<FAnalyticsEventAttribute> Attributes;
     Attributes.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
     RecordEvent(TEXT("AnalyticsSessionEnd"), Attributes);
-    UE_LOG(LogInfinyonAnalytics, Log, TEXT("Provider Session End: %s"), *GetSessionID());
 }
+
 
 void FAnalyticsProviderInfinyonAnalytics::FlushEvents()
 {
@@ -109,15 +131,18 @@ void FAnalyticsProviderInfinyonAnalytics::FlushEvents()
     }
 }
 
+
 void FAnalyticsProviderInfinyonAnalytics::SetUserID(const FString& InUserID)
 {
     UserID = InUserID;
 }
 
+
 FString FAnalyticsProviderInfinyonAnalytics::GetUserID() const
 {
     return UserID;
 }
+
 
 bool FAnalyticsProviderInfinyonAnalytics::SetSessionID(const FString& InSessionID)
 {
@@ -125,10 +150,12 @@ bool FAnalyticsProviderInfinyonAnalytics::SetSessionID(const FString& InSessionI
 	return true;
 }
 
+
 FString FAnalyticsProviderInfinyonAnalytics::GetSessionID() const
 {
     return SessionID;
 }
+
 
 void FAnalyticsProviderInfinyonAnalytics::RecordEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
@@ -147,36 +174,38 @@ void FAnalyticsProviderInfinyonAnalytics::RecordEvent(const FString& EventName, 
     SendEventOverWebSocket(EventName, Attributes);
 }
 
+
 void FAnalyticsProviderInfinyonAnalytics::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
 {
-    // todo add version?
 }
+
 
 TArray<FAnalyticsEventAttribute> FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAttributesSafe() const
 {
-    // return empty
     return TArray<FAnalyticsEventAttribute>();
 }
+
 
 int32 FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAttributeCount() const
 {
     return 0;
 }
 
+
 FAnalyticsEventAttribute FAnalyticsProviderInfinyonAnalytics::GetDefaultEventAttribute(int AttributeIndex) const
 {
-    // return emptyhttps://forums.unrealengine.com/t/how-to-properly-implement-iwebsocket-and-send-packets-with-high-frequency/1206501/2
     return FAnalyticsEventAttribute();
 }
+
 
 void FAnalyticsProviderInfinyonAnalytics::WebSocketCheck()
 {
     auto valid = WebSocket.IsValid() ? TEXT("valid") : TEXT("INVALID");
     auto connected = WebSocket->IsConnected() ? TEXT("connected") : TEXT("NOT connected");
-    UE_LOG(LogInfinyonAnalytics, Error, TEXT("WebSocket status: %s %s"), valid, connected);
+    UE_LOG(LogInfinyonAnalytics, VeryVerbose, TEXT("WebSocket status: %s %s buf: %d"), valid, connected, nEventBuffer);
 }
 
-// Can check WebSocket.IsValid() to see if the connection was successful
+
 void FAnalyticsProviderInfinyonAnalytics::WebSocketConnect()
 {
     if (WebSocket.IsValid() && WebSocket->IsConnected())
@@ -235,6 +264,7 @@ void FAnalyticsProviderInfinyonAnalytics::WebSocketConnect()
     }
 }
 
+
 void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
     FlushEvents();
@@ -247,6 +277,7 @@ void FAnalyticsProviderInfinyonAnalytics::SendEventOverWebSocket(const FString& 
     WebSocket->Send(out_string);
 }
 
+
 bool FAnalyticsProviderInfinyonAnalytics::EnQueueEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes)
 {
     if (nEventBuffer >= DEFAULT_BUFFER_ENTRIES)
@@ -258,6 +289,7 @@ bool FAnalyticsProviderInfinyonAnalytics::EnQueueEvent(const FString& EventName,
     nEventBuffer++;
     return true;
 }
+
 
 FString FAnalyticsProviderInfinyonAnalytics::DeQueueEvent()
 {
