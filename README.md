@@ -29,6 +29,11 @@ and visualization.
     - Go to Infinyon.com and setup a fluvio cluster and create an access-key for
       an analytics storage topic.
       https://www.fluvio.io/docs/latest/cloud/how-to/use-ws-gateway
+    - go the project `Config/DefaultEngine.ini` file and add this section
+      ```
+      [InfinyonAnalytics]
+      ApiKey=abcd
+      ```
 
 5. **Using the Plugin**:
     - The standard Unreal Engine Analytics Event interfaces can be used to
