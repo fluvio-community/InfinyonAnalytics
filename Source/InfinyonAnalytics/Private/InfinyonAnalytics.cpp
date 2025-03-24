@@ -90,9 +90,27 @@ bool FAnalyticsProviderInfinyonAnalytics::StartSession(const TArray<FAnalyticsEv
 {
     UE_LOG(LogInfinyonAnalytics, Log, TEXT("Session Started: sid \"%s\""), *GetSessionID());
 
-    // todo add other FApp attributes
+
     TArray<FAnalyticsEventAttribute> attrs;
     attrs.Add(FAnalyticsEventAttribute(TEXT("sessionID"), GetSessionID()));
+
+    // additional FApp attributes
+    if (true) {
+        auto SessionName = FApp::GetSessionName();
+        if (!SessionName.IsEmpty())
+        {
+            attrs.Add(FAnalyticsEventAttribute(TEXT("sessionName"), SessionName));
+        }
+        attrs.Add(FAnalyticsEventAttribute(TEXT("buildDate"), FApp::GetBuildDate()));
+        attrs.Add(FAnalyticsEventAttribute(TEXT("buildVersion"), FApp::GetBuildVersion()));
+        attrs.Add(FAnalyticsEventAttribute(TEXT("graphicsRhi"), FApp::GetGraphicsRHI()));
+        attrs.Add(FAnalyticsEventAttribute(TEXT("instanceId"), FApp::GetInstanceId()));
+        attrs.Add(FAnalyticsEventAttribute(TEXT("unrealEngineId"), FApp::GetEpicProductIdentifier()));
+        if (FApp::HasProjectName())
+        {
+            attrs.Add(FAnalyticsEventAttribute(TEXT("projectName"), FApp::GetProjectName()));
+        }
+    }
     attrs.Append(Attributes);
 
     RecordEvent(TEXT("AnalyticsSessionStart"), attrs);
