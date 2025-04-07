@@ -14,11 +14,17 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+	"EngineVersion": "5.XX.X",
 	"Modules": [
 		{
 			"Name": "InfinyonAnalytics",
 			"Type": "Runtime",
-			"LoadingPhase": "PostConfigInit"
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [
+				"Mac",
+				"Linux",
+				"LinuxArm64",
+			]
 		}
 	]
 }
