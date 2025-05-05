@@ -1,3 +1,4 @@
+// Copyright Infinyon.com  2025 All Rights Reserved.
 #pragma once
 
 #include "Interfaces/IAnalyticsProvider.h"
