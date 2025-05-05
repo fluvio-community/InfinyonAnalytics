@@ -1,4 +1,4 @@
-// Copyright Infinyon.com  All Rights Reserved.
+// Copyright Infinyon.com  2025 All Rights Reserved.
 #include "InfinyonAnalytics.h"
 #include "InfinyonAnalyticsProvider.h"
 #include "Json.h"
