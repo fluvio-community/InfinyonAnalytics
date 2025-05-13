@@ -4,7 +4,7 @@
 #include "Interfaces/IAnalyticsProvider.h"
 #include "WebSocketsModule.h"
 #include "IWebSocket.h"
-
+#include "Containers/Queue.h"
 
 class FAnalyticsProviderInfinyonAnalytics : public IAnalyticsProvider
 {

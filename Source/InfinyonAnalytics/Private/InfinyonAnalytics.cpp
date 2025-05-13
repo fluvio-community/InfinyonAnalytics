@@ -1,7 +1,15 @@
 // Copyright Infinyon.com  2025 All Rights Reserved.
 #include "InfinyonAnalytics.h"
 #include "InfinyonAnalyticsProvider.h"
-#include "Json.h"
+
+// #include "Json.h"
+// include json sub components to avoid pagma warning
+#include "Dom/JsonValue.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonSerializerMacros.h"
+#include "Serialization/JsonWriter.h"
+
 #include "WebSocketsModule.h"
 #include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
