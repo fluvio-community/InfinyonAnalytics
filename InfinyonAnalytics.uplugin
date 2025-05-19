@@ -1,7 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.1",
+	"VersionName": "0.4",
+	"EngineVersion": "5.5.0",
 	"FriendlyName": "Infinyon Analytics Provider",
 	"Description": "Send JSON formatted analytics events to a Fluvio cluster on Infinyon Cloud",
 	"Category": "Analytics",
@@ -14,7 +15,6 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
-	"EngineVersion": "5.XX.X",
 	"Modules": [
 		{
 			"Name": "InfinyonAnalytics",
@@ -23,7 +23,7 @@
 			"PlatformAllowList": [
 				"Mac",
 				"Linux",
-				"LinuxArm64",
+				"LinuxArm64"
 			]
 		}
 	]
