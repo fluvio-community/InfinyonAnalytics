@@ -1,5 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
+// Copyright Infinyon 2025 All Rights Reserved.
 using UnrealBuildTool;
 
 public class InfinyonAnalytics : ModuleRules
@@ -26,7 +25,6 @@ public class InfinyonAnalytics : ModuleRules
 				"Core",
 				"CoreUObject",
                 "Engine",
-				// ... add other public dependencies that you statically link with here ...
 			}
 			);
 
@@ -36,7 +34,6 @@ public class InfinyonAnalytics : ModuleRules
 				"Analytics",
 				"Json",
 				"WebSockets"
-				// ... add private dependencies that you statically link with here ...
 			}
 			);
 

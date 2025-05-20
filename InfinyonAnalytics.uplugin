@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.4",
+	"VersionName": "0.5",
 	"EngineVersion": "5.5.0",
 	"FriendlyName": "Infinyon Analytics Provider",
 	"Description": "Send JSON formatted analytics events to a Fluvio cluster on Infinyon Cloud",
